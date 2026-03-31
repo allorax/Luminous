@@ -36,6 +36,7 @@ import { MarketPulse } from '@/components/MarketPulse';
 import { PortfolioManager } from '@/components/PortfolioManager';
 import { PortfolioPerformance } from '@/components/PortfolioPerformance';
 import { SymbolDetail } from '@/components/SymbolDetail';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 
 const initialStocks: Stock[] = [
   { symbol: 'AAPL', name: 'Apple Inc.', price: 182.63, change: 1.45, changePercent: 0.8, volume: '52.4M', marketCap: '2.85T', chartData: Array.from({ length: 20 }, (_, i) => ({ time: `2026-03-${31-i}`, value: 170 + Math.random() * 20 })) },
@@ -206,7 +207,9 @@ export function DashboardPage() {
       case 'historical-analysis':
         return (
           <div key={id} className="grid grid-cols-1 lg:grid-cols-1 gap-6">
-            <AdvancedChartWidget symbol={activeSymbol} />
+            <ErrorBoundary fallbackMessage="Chart widget encountered an error. Click 'Try Again' to reload.">
+              <AdvancedChartWidget symbol={activeSymbol} />
+            </ErrorBoundary>
           </div>
         );
       case 'secondary-charts':

@@ -33,16 +33,24 @@ export function MarketPulse() {
   useEffect(() => {
     const fetchMarketData = async () => {
       try {
-        const [gainersRes, losersRes, indicesRes, statusRes] = await Promise.all([
+        const [gainersRes, losersRes, indicesRes, statusRes] = await Promise.allSettled([
           axios.get('/api/market/gainers'),
           axios.get('/api/market/losers'),
           axios.get('/api/market/indices'),
           axios.get('/api/market/status')
         ]);
-        setGainers(gainersRes.data.slice(0, 5));
-        setLosers(losersRes.data.slice(0, 5));
-        setIndices(indicesRes.data.filter((i: any) => ['^GSPC', '^DJI', '^IXIC', '^FTSE'].includes(i.symbol)).slice(0, 4));
-        setMarketStatus(statusRes.data);
+        if (gainersRes.status === 'fulfilled' && Array.isArray(gainersRes.value.data)) {
+          setGainers(gainersRes.value.data.slice(0, 5));
+        }
+        if (losersRes.status === 'fulfilled' && Array.isArray(losersRes.value.data)) {
+          setLosers(losersRes.value.data.slice(0, 5));
+        }
+        if (indicesRes.status === 'fulfilled' && Array.isArray(indicesRes.value.data)) {
+          setIndices(indicesRes.value.data.slice(0, 4));
+        }
+        if (statusRes.status === 'fulfilled') {
+          setMarketStatus(statusRes.value.data);
+        }
       } catch (err) {
         console.error('Failed to fetch market pulse data:', err);
       } finally {

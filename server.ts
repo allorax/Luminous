@@ -60,12 +60,22 @@ async function startServer() {
   // --- Data Service Layer ---
   const FMP_KEY = process.env.FMP_API_KEY;
   const POLYGON_KEY = process.env.POLYGON_API_KEY;
+  const YAHOO_HEADERS = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' };
 
-  if (!FMP_KEY || !POLYGON_KEY) {
-    console.warn("CRITICAL: FMP_API_KEY or POLYGON_API_KEY is missing. Real-time data will be unavailable.");
+  if (!FMP_KEY && !POLYGON_KEY) {
+    console.log("ℹ️  No FMP/Polygon keys found. Using Yahoo Finance (free, no auth required).");
   }
 
-  // Real-time / delayed quote (Polygon)
+  // Helper: fetch Yahoo Finance chart data
+  async function fetchYahooChart(symbol: string, range = '1d', interval = '5m') {
+    const response = await axios.get(
+      `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=${range}&interval=${interval}`,
+      { headers: YAHOO_HEADERS }
+    );
+    return response.data.chart.result[0];
+  }
+
+  // Real-time quote — Yahoo Finance (free) or Polygon (if key set)
   app.get("/api/quote/:symbol", async (req, res) => {
     const { symbol } = req.params;
     const cacheKey = `quote_${symbol}`;
@@ -73,17 +83,33 @@ async function startServer() {
     if (cached) return res.json(cached);
 
     try {
-      const response = await axios.get(`https://api.polygon.io/v2/last/trade/${symbol}?apiKey=${POLYGON_KEY}`);
-      const data = response.data.results;
-      cache.set(cacheKey, data, 60); 
-      res.json(data);
-    } catch (error) {
-      // Mock fallback
-      res.json({ p: 150.00, s: 100, t: Date.now() });
+      // Try Polygon first if key exists
+      if (POLYGON_KEY) {
+        const response = await axios.get(`https://api.polygon.io/v2/last/trade/${symbol}?apiKey=${POLYGON_KEY}`);
+        const data = response.data.results;
+        cache.set(cacheKey, data, 60);
+        return res.json(data);
+      }
+      // Fallback: Yahoo Finance (free)
+      const ydata = await fetchYahooChart(symbol, '1d', '1m');
+      const meta = ydata.meta;
+      const result = {
+        p: meta.regularMarketPrice,
+        s: meta.regularMarketVolume,
+        t: meta.regularMarketTime * 1000,
+        previousClose: meta.chartPreviousClose,
+        dayHigh: meta.regularMarketDayHigh,
+        dayLow: meta.regularMarketDayLow
+      };
+      cache.set(cacheKey, result, 30); // 30s cache for quotes
+      res.json(result);
+    } catch (error: any) {
+      console.error(`Quote error for ${symbol}:`, error.message);
+      res.status(502).json({ error: "Failed to fetch quote" });
     }
   });
 
-  // Company profile & fundamentals (FMP)
+  // Company profile — Yahoo Finance (free) or FMP (if key set)
   app.get("/api/profile/:symbol", async (req, res) => {
     const { symbol } = req.params;
     const cacheKey = `profile_${symbol}`;
@@ -91,35 +117,108 @@ async function startServer() {
     if (cached) return res.json(cached);
 
     try {
-      const response = await axios.get(`https://financialmodelingprep.com/api/v3/profile/${symbol}?apikey=${FMP_KEY}`);
-      const data = response.data[0];
-      if (!data) return res.status(404).json({ error: "Profile not found" });
-      cache.set(cacheKey, data, 3600);
-      res.json(data);
-    } catch (error) {
-      res.status(502).json({ error: "Failed to fetch live profile data" });
+      // Try FMP first if key exists
+      if (FMP_KEY) {
+        const response = await axios.get(`https://financialmodelingprep.com/api/v3/profile/${symbol}?apikey=${FMP_KEY}`);
+        const data = response.data[0];
+        if (data) {
+          cache.set(cacheKey, data, 3600);
+          return res.json(data);
+        }
+      }
+      // Fallback: Yahoo Finance (free)
+      const ydata = await fetchYahooChart(symbol, '1mo', '1d');
+      const meta = ydata.meta;
+      const profile = {
+        symbol: meta.symbol,
+        price: meta.regularMarketPrice,
+        companyName: meta.longName || meta.shortName || symbol,
+        changes: meta.regularMarketPrice - meta.chartPreviousClose,
+        changesPercentage: ((meta.regularMarketPrice - meta.chartPreviousClose) / meta.chartPreviousClose * 100),
+        currency: meta.currency,
+        exchangeShortName: meta.exchangeName,
+        fullExchangeName: meta.fullExchangeName,
+        mktCap: 0, // Yahoo chart API doesn't provide market cap
+        volAvg: meta.regularMarketVolume,
+        range: `${meta.fiftyTwoWeekLow}-${meta.fiftyTwoWeekHigh}`,
+        beta: 0,
+        lastDiv: 0,
+        description: `${meta.longName || symbol} — traded on ${meta.fullExchangeName}`,
+        industry: "N/A",
+        sector: "N/A",
+        ceo: "N/A",
+        website: ""
+      };
+      cache.set(cacheKey, profile, 3600);
+      res.json(profile);
+    } catch (error: any) {
+      console.error(`Profile error for ${symbol}:`, error.message);
+      res.status(502).json({ error: "Failed to fetch profile" });
     }
   });
 
-  // Historical daily/intraday data (Polygon)
+  // Historical OHLCV data — Yahoo Finance (free) or Polygon (if key set)
   app.get("/api/historical/:symbol", async (req, res) => {
     const { symbol } = req.params;
-    const { multiplier = 1, timespan = 'day', from = '2023-01-01', to = '2024-01-01' } = req.query;
+    const { multiplier = 1, timespan = 'day', from, to } = req.query;
     const cacheKey = `hist_${symbol}_${timespan}_${from}_${to}`;
     const cached = cache.get(cacheKey);
     if (cached) return res.json(cached);
 
     try {
-      const response = await axios.get(`https://api.polygon.io/v2/aggs/ticker/${symbol}/range/${multiplier}/${timespan}/${from}/${to}?apiKey=${POLYGON_KEY}`);
-      const data = response.data.results;
-      cache.set(cacheKey, data, 3600);
-      res.json(data);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to fetch historical data" });
+      // Try Polygon first if key exists
+      if (POLYGON_KEY) {
+        const response = await axios.get(
+          `https://api.polygon.io/v2/aggs/ticker/${symbol}/range/${multiplier}/${timespan}/${from}/${to}?apiKey=${POLYGON_KEY}`
+        );
+        if (response.data.results) {
+          cache.set(cacheKey, response.data.results, 3600);
+          return res.json(response.data.results);
+        }
+      }
+      // Fallback: Yahoo Finance (free)
+      // Map timespan to Yahoo range/interval
+      let range = '1mo', interval = '1d';
+      if (timespan === 'minute') { range = '1d'; interval = '5m'; }
+      else if (timespan === 'hour') { range = '5d'; interval = '1h'; }
+      else if (timespan === 'day') {
+        // Calculate approximate range from from/to dates
+        if (from && to) {
+          const diffMs = new Date(to as string).getTime() - new Date(from as string).getTime();
+          const diffDays = diffMs / (1000 * 60 * 60 * 24);
+          if (diffDays <= 7) range = '5d';
+          else if (diffDays <= 30) range = '1mo';
+          else if (diffDays <= 90) range = '3mo';
+          else if (diffDays <= 365) range = '1y';
+          else range = '5y';
+        }
+        interval = '1d';
+      }
+      else if (timespan === 'week') { range = '5y'; interval = '1wk'; }
+
+      const ydata = await fetchYahooChart(symbol, range, interval);
+      const timestamps = ydata.timestamp;
+      const quotes = ydata.indicators.quote[0];
+
+      // Transform to Polygon-compatible format (t, o, h, l, c, v)
+      const results = timestamps.map((t: number, i: number) => ({
+        t: t * 1000, // Yahoo uses seconds, convert to ms
+        o: quotes.open[i],
+        h: quotes.high[i],
+        l: quotes.low[i],
+        c: quotes.close[i],
+        v: quotes.volume[i]
+      })).filter((d: any) => d.o !== null && d.c !== null); // Filter out null entries
+
+      cache.set(cacheKey, results, 3600);
+      res.json(results);
+    } catch (error: any) {
+      console.error(`Historical error for ${symbol}:`, error.message);
+      res.status(502).json({ error: "Failed to fetch historical data" });
     }
   });
 
-  // News (FMP)
+  // News — FMP (if key set), otherwise empty array
   app.get("/api/news/:symbol", async (req, res) => {
     const { symbol } = req.params;
     const cacheKey = `news_${symbol}`;
@@ -127,71 +226,134 @@ async function startServer() {
     if (cached) return res.json(cached);
 
     try {
-      const response = await axios.get(`https://financialmodelingprep.com/api/v3/stock_news?tickers=${symbol}&limit=10&apikey=${FMP_KEY}`);
-      const data = response.data;
-      cache.set(cacheKey, data, 1800); // 30 mins cache
-      res.json(data);
+      if (FMP_KEY) {
+        const response = await axios.get(`https://financialmodelingprep.com/api/v3/stock_news?tickers=${symbol}&limit=10&apikey=${FMP_KEY}`);
+        cache.set(cacheKey, response.data, 1800);
+        return res.json(response.data);
+      }
+      res.json([]); // No free news source without auth
     } catch (error) {
-      res.status(500).json({ error: "Failed to fetch news" });
+      res.json([]);
     }
   });
 
-  // Market Status (Polygon)
+  // Market Status — derived from Yahoo Finance trading periods
   app.get("/api/market/status", async (req, res) => {
     const cacheKey = "market_status";
     const cached = cache.get(cacheKey);
     if (cached) return res.json(cached);
 
     try {
-      const response = await axios.get(`https://api.polygon.io/v1/marketstatus/now?apiKey=${POLYGON_KEY}`);
-      cache.set(cacheKey, response.data, 60); // 1 minute cache
-      res.json(response.data);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to fetch market status" });
+      if (POLYGON_KEY) {
+        const response = await axios.get(`https://api.polygon.io/v1/marketstatus/now?apiKey=${POLYGON_KEY}`);
+        cache.set(cacheKey, response.data, 60);
+        return res.json(response.data);
+      }
+      // Fallback: derive from Yahoo Finance
+      const ydata = await fetchYahooChart('AAPL', '1d', '1m');
+      const tradingPeriod = ydata.meta.currentTradingPeriod;
+      const now = Math.floor(Date.now() / 1000);
+      const isOpen = now >= tradingPeriod.regular.start && now <= tradingPeriod.regular.end;
+      const status = {
+        market: isOpen ? "open" : "closed",
+        serverTime: new Date().toISOString(),
+        exchanges: { nyse: isOpen ? "open" : "closed", nasdaq: isOpen ? "open" : "closed" }
+      };
+      cache.set(cacheKey, status, 60);
+      res.json(status);
+    } catch (error: any) {
+      res.json({ market: "unknown", serverTime: new Date().toISOString() });
     }
   });
 
-  // Market Gainers (FMP)
+  // Market Movers — fetch individual quotes via Yahoo Finance
+  async function fetchYahooMovers(type: 'gainers' | 'losers' | 'actives') {
+    const symbols = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOGL', 'META', 'AMD', 'INTC', 'NFLX'];
+    const results = await Promise.allSettled(
+      symbols.map(async (sym) => {
+        const data = await fetchYahooChart(sym, '1d', '1d');
+        const meta = data.meta;
+        const change = meta.regularMarketPrice - meta.chartPreviousClose;
+        const changePct = (change / meta.chartPreviousClose) * 100;
+        return {
+          symbol: sym,
+          name: meta.longName || meta.shortName || sym,
+          price: meta.regularMarketPrice,
+          change: parseFloat(change.toFixed(2)),
+          changesPercentage: parseFloat(changePct.toFixed(2))
+        };
+      })
+    );
+    const fulfilled = results
+      .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+      .map(r => r.value);
+
+    if (type === 'gainers') return fulfilled.sort((a, b) => b.changesPercentage - a.changesPercentage);
+    if (type === 'losers') return fulfilled.sort((a, b) => a.changesPercentage - b.changesPercentage);
+    return fulfilled; // actives
+  }
+
   app.get("/api/market/gainers", async (req, res) => {
     const cacheKey = "market_gainers";
     const cached = cache.get(cacheKey);
     if (cached) return res.json(cached);
 
     try {
-      const response = await axios.get(`https://financialmodelingprep.com/api/v3/stock_market/gainers?apikey=${FMP_KEY}`);
-      cache.set(cacheKey, response.data, 300);
-      res.json(response.data);
-    } catch (error) {
-      res.status(502).json({ error: "Live gainers data unavailable" });
+      if (FMP_KEY) {
+        const response = await axios.get(`https://financialmodelingprep.com/api/v3/stock_market/gainers?apikey=${FMP_KEY}`);
+        cache.set(cacheKey, response.data, 300);
+        return res.json(response.data);
+      }
+      const data = await fetchYahooMovers('gainers');
+      cache.set(cacheKey, data, 300);
+      res.json(data);
+    } catch (error: any) {
+      console.error("Gainers error:", error.message);
+      res.status(502).json({ error: "Failed to fetch gainers" });
     }
   });
 
-  // Market Losers (FMP)
   app.get("/api/market/losers", async (req, res) => {
     const cacheKey = "market_losers";
     const cached = cache.get(cacheKey);
     if (cached) return res.json(cached);
 
     try {
-      const response = await axios.get(`https://financialmodelingprep.com/api/v3/stock_market/losers?apikey=${FMP_KEY}`);
-      cache.set(cacheKey, response.data, 300);
-      res.json(response.data);
-    } catch (error) {
-      res.status(502).json({ error: "Live losers data unavailable" });
+      if (FMP_KEY) {
+        const response = await axios.get(`https://financialmodelingprep.com/api/v3/stock_market/losers?apikey=${FMP_KEY}`);
+        cache.set(cacheKey, response.data, 300);
+        return res.json(response.data);
+      }
+      const data = await fetchYahooMovers('losers');
+      cache.set(cacheKey, data, 300);
+      res.json(data);
+    } catch (error: any) {
+      console.error("Losers error:", error.message);
+      res.status(502).json({ error: "Failed to fetch losers" });
     }
   });
 
-  // Market Actives (FMP)
   app.get("/api/market/actives", async (req, res) => {
+    const cacheKey = "market_actives";
+    const cached = cache.get(cacheKey);
+    if (cached) return res.json(cached);
+
     try {
-      const response = await axios.get(`https://financialmodelingprep.com/api/v3/stock_market/actives?apikey=${FMP_KEY}`);
-      res.json(response.data.slice(0, 10));
-    } catch (error) {
-      res.status(502).json({ error: "Live market activity data unavailable" });
+      if (FMP_KEY) {
+        const response = await axios.get(`https://financialmodelingprep.com/api/v3/stock_market/actives?apikey=${FMP_KEY}`);
+        cache.set(cacheKey, response.data.slice(0, 10), 300);
+        return res.json(response.data.slice(0, 10));
+      }
+      const data = await fetchYahooMovers('actives');
+      cache.set(cacheKey, data, 300);
+      res.json(data);
+    } catch (error: any) {
+      console.error("Actives error:", error.message);
+      res.status(502).json({ error: "Failed to fetch actives" });
     }
   });
 
-  // Symbol Search (FMP)
+  // Symbol Search — Yahoo Finance autocomplete (free) or FMP (if key set)
   app.get("/api/search", async (req, res) => {
     const { q } = req.query;
     if (!q) return res.json([]);
@@ -199,27 +361,74 @@ async function startServer() {
     const cached = cache.get(cacheKey);
     if (cached) return res.json(cached);
 
-    if (!FMP_KEY) {
-      console.warn("FMP_API_KEY missing - returning mock search results");
-      const mockResults = [
-        { symbol: "AAPL", name: "Apple Inc.", stockExchange: "NASDAQ" },
-        { symbol: "TSLA", name: "Tesla Inc.", stockExchange: "NASDAQ" },
-        { symbol: "NVDA", name: "NVIDIA Corporation.", stockExchange: "NASDAQ" },
-      ].filter(r => r.symbol.includes(String(q).toUpperCase()));
-      return res.json(mockResults);
-    }
-
     try {
-      const response = await axios.get(`https://financialmodelingprep.com/api/v3/search?query=${q}&limit=10&apikey=${FMP_KEY}`);
-      const data = response.data;
-      cache.set(cacheKey, data, 3600); // 1 hour cache
-      res.json(data);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to fetch search results" });
+      if (FMP_KEY) {
+        const response = await axios.get(`https://financialmodelingprep.com/api/v3/search?query=${q}&limit=10&apikey=${FMP_KEY}`);
+        cache.set(cacheKey, response.data, 3600);
+        return res.json(response.data);
+      }
+      // Fallback: Yahoo Finance autocomplete (free)
+      const response = await axios.get(
+        `https://query1.finance.yahoo.com/v1/finance/search?q=${q}&quotesCount=10&newsCount=0`,
+        { headers: YAHOO_HEADERS }
+      );
+      const results = (response.data.quotes || []).map((item: any) => ({
+        symbol: item.symbol,
+        name: item.longname || item.shortname || item.symbol,
+        stockExchange: item.exchDisp || item.exchange,
+        type: item.quoteType
+      }));
+      cache.set(cacheKey, results, 3600);
+      res.json(results);
+    } catch (error: any) {
+      console.error("Search error:", error.message);
+      res.json([]);
     }
   });
 
   // Major Indices (FMP)
+
+  // Major Global Indices — Yahoo Finance (free)
+  app.get("/api/market/indices", async (req, res) => {
+    const cacheKey = "market_indices";
+    const cached = cache.get(cacheKey);
+    if (cached) return res.json(cached);
+
+    try {
+      const indexSymbols = [
+        { ySymbol: '^GSPC', name: 'S&P 500 Index' },
+        { ySymbol: '^DJI', name: 'Dow Jones Industrial Average' },
+        { ySymbol: '^IXIC', name: 'NASDAQ Composite Index' },
+        { ySymbol: '^FTSE', name: 'FTSE 100 Index' }
+      ];
+
+      const results = await Promise.allSettled(
+        indexSymbols.map(async (idx) => {
+          const data = await fetchYahooChart(idx.ySymbol, '1d', '1d');
+          const meta = data.meta;
+          const change = meta.regularMarketPrice - meta.chartPreviousClose;
+          const changePct = (change / meta.chartPreviousClose) * 100;
+          return {
+            symbol: idx.ySymbol,
+            name: idx.name,
+            price: meta.regularMarketPrice,
+            change: parseFloat(change.toFixed(2)),
+            changesPercentage: parseFloat(changePct.toFixed(2))
+          };
+        })
+      );
+
+      const fulfilled = results
+        .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+        .map(r => r.value);
+
+      cache.set(cacheKey, fulfilled, 120); // 2 min cache
+      res.json(fulfilled);
+    } catch (error: any) {
+      console.error("Indices error:", error.message);
+      res.json([]);
+    }
+  });
 
   // Portfolios API
   app.get("/api/portfolios", async (req, res) => {
@@ -412,7 +621,7 @@ async function startServer() {
     // Get all unique symbols across all clients
     const allSymbols = new Set<string>();
     subscriptions.forEach(subs => {
-      subs.forEach(sym => allSymbols.add(sym));
+      subs.forEach((sym: string) => allSymbols.add(sym));
     });
 
     if (allSymbols.size === 0) return;
@@ -424,31 +633,30 @@ async function startServer() {
         const symbolsStr = Array.from(allSymbols).join(',');
         const response = await axios.get(`https://financialmodelingprep.com/api/v3/quote/${symbolsStr}?apikey=${FMP_KEY}`);
         quotes = response.data;
-      } catch (error) {
+      } catch (error: any) {
         console.error("FMP API broadcast error:", error.message);
       }
     }
 
-    // Fallback to mock data if API fails or KEY missing
+    // Fallback: Yahoo Finance (free, no auth)
     if (!Array.isArray(quotes) || quotes.length === 0) {
-      quotes = Array.from(allSymbols).map(symbol => {
-        const basePrice = symbol === 'AAPL' ? 175.20 : 
-                          symbol === 'NVDA' ? 450.50 : 
-                          symbol === 'MSFT' ? 380.12 : 100.00;
-        
-        // Generate random fluctuation (-0.5% to +0.5%)
-        const fluctuation = (Math.random() - 0.5) * 0.01;
-        const price = basePrice * (1 + fluctuation);
-        const change = price - basePrice;
-        const changePercent = (change / basePrice) * 100;
-
-        return {
-          symbol,
-          price,
-          change,
-          changesPercentage: changePercent
-        };
-      });
+      const results = await Promise.allSettled(
+        Array.from(allSymbols).map(async (symbol) => {
+          const data = await fetchYahooChart(symbol, '1d', '1m');
+          const meta = data.meta;
+          const change = meta.regularMarketPrice - meta.chartPreviousClose;
+          const changePct = (change / meta.chartPreviousClose) * 100;
+          return {
+            symbol,
+            price: meta.regularMarketPrice,
+            change: parseFloat(change.toFixed(2)),
+            changesPercentage: parseFloat(changePct.toFixed(2))
+          };
+        })
+      );
+      quotes = results
+        .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+        .map(r => r.value);
     }
 
     if (Array.isArray(quotes)) {
@@ -471,8 +679,8 @@ async function startServer() {
     }
   };
 
-  // Run broadcast every 2 seconds for more "real-time" feel
-  const broadcastInterval = setInterval(broadcastPriceUpdates, 2000);
+  // Run broadcast every 5 seconds (rate-limit safe for Yahoo Finance)
+  const broadcastInterval = setInterval(broadcastPriceUpdates, 5000);
 
   wss.on("connection", (ws) => {
     console.log("Client connected to WebSocket");

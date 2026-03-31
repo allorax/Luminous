@@ -96,8 +96,22 @@ export function AdvancedChartWidget({ symbol, className }: AdvancedChartWidgetPr
 
   useEffect(() => {
     if (!chartContainerRef.current) return;
+    
+    // Guard: ensure container has valid dimensions before creating chart
+    const { clientWidth, clientHeight } = chartContainerRef.current;
+    if (clientWidth <= 0 || clientHeight <= 0) {
+      // Retry after a short delay when container gets laid out
+      const retryTimer = setTimeout(() => {
+        if (chartContainerRef.current) {
+          chartContainerRef.current.dispatchEvent(new Event('resize'));
+        }
+      }, 200);
+      return () => clearTimeout(retryTimer);
+    }
 
     const chart = createChart(chartContainerRef.current, {
+      width: clientWidth,
+      height: clientHeight,
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
         textColor: '#888',
@@ -471,10 +485,10 @@ export function AdvancedChartWidget({ symbol, className }: AdvancedChartWidgetPr
 
           <DropdownMenu>
             <DropdownMenuTrigger>
-              <Button variant="outline" size="sm" className="h-8 gap-2">
+              <div className="inline-flex items-center justify-center h-8 px-3 gap-2 rounded-md border border-input bg-background text-sm font-medium hover:bg-accent hover:text-accent-foreground cursor-pointer">
                 <Settings2 className="h-4 w-4" />
                 Indicators
-              </Button>
+              </div>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48">
               <DropdownMenuLabel>Overlays</DropdownMenuLabel>
