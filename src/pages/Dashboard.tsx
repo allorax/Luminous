@@ -1,0 +1,316 @@
+import { useEffect, useState, useCallback } from 'react';
+import axios from 'axios';
+import { StockCard } from '@/components/StockCard';
+import { Watchlist } from '@/components/Watchlist';
+import { ChartWidget } from '@/components/ChartWidget';
+import { StockChartWidget } from '@/components/StockChartWidget';
+import { AdvancedChartWidget } from '@/components/AdvancedChartWidget';
+import { AICopilot } from '@/components/AICopilot';
+import { Header, Sidebar } from '@/components/Navigation';
+import { Stock } from '@/types';
+import { motion } from 'motion/react';
+import { Button } from '@/components/ui/button';
+import { Plus, LayoutGrid, List } from 'lucide-react';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { 
+  DndContext, 
+  closestCenter, 
+  KeyboardSensor, 
+  PointerSensor, 
+  useSensor, 
+  useSensors,
+  DragEndEvent
+} from '@dnd-kit/core';
+import { 
+  arrayMove, 
+  SortableContext, 
+  sortableKeyboardCoordinates, 
+  verticalListSortingStrategy,
+  rectSortingStrategy
+} from '@dnd-kit/sortable';
+import { DraggableWidget } from '@/components/DraggableWidget';
+import { CSVImporter } from '@/components/CSVImporter';
+import { AlertSystem } from '@/components/AlertSystem';
+import { MarketPulse } from '@/components/MarketPulse';
+
+const initialStocks: Stock[] = [
+  { symbol: 'AAPL', name: 'Apple Inc.', price: 182.63, change: 1.45, changePercent: 0.8, volume: '52.4M', marketCap: '2.85T', chartData: Array.from({ length: 20 }, (_, i) => ({ time: `${i}:00`, value: 170 + Math.random() * 20 })) },
+  { symbol: 'TSLA', name: 'Tesla, Inc.', price: 193.57, change: -4.21, changePercent: -2.13, volume: '112.8M', marketCap: '615.2B', chartData: Array.from({ length: 20 }, (_, i) => ({ time: `${i}:00`, value: 180 + Math.random() * 30 })) },
+  { symbol: 'NVDA', name: 'NVIDIA Corp.', price: 822.79, change: 35.12, changePercent: 4.46, volume: '48.2M', marketCap: '2.06T', chartData: Array.from({ length: 20 }, (_, i) => ({ time: `${i}:00`, value: 700 + Math.random() * 150 })) },
+  { symbol: 'MSFT', name: 'Microsoft Corp.', price: 415.50, change: 2.15, changePercent: 0.52, volume: '22.1M', marketCap: '3.09T', chartData: Array.from({ length: 20 }, (_, i) => ({ time: `${i}:00`, value: 390 + Math.random() * 40 })) },
+  { symbol: 'AMZN', name: 'Amazon.com, Inc.', price: 175.35, change: 0.82, changePercent: 0.47, volume: '35.6M', marketCap: '1.82T', chartData: Array.from({ length: 20 }, (_, i) => ({ time: `${i}:00`, value: 160 + Math.random() * 25 })) },
+];
+
+const initialWidgetOrder = ['market-pulse', 'market-overview', 'main-chart', 'historical-analysis', 'watchlist', 'secondary-charts', 'importer', 'alerts'];
+
+export function DashboardPage() {
+  const [showCopilot, setShowCopilot] = useState(true);
+  const [stocks, setStocks] = useState<Stock[]>(initialStocks);
+  const [watchlist, setWatchlist] = useState<Stock[]>(initialStocks);
+  const [widgetOrder, setWidgetOrder] = useState(initialWidgetOrder);
+  const [activeSymbol, setActiveSymbol] = useState('NVDA');
+
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  // Fetch initial data for stocks
+  useEffect(() => {
+    const fetchInitialData = async () => {
+      const updatedStocks = await Promise.all(stocks.map(async (stock) => {
+        try {
+          const [quoteRes, profileRes] = await Promise.all([
+            axios.get(`/api/quote/${stock.symbol}`),
+            axios.get(`/api/profile/${stock.symbol}`)
+          ]);
+          
+          if (quoteRes.data && profileRes.data) {
+            const quote = quoteRes.data;
+            const profile = profileRes.data;
+            
+            // Calculate change from previous close if available, or use a mock if not
+            // Polygon last trade doesn't always give daily change directly
+            // For now, we'll keep the mock logic but use real prices
+            return {
+              ...stock,
+              name: profile.companyName || stock.name,
+              price: quote.p || stock.price,
+              volume: profile.volAvg ? `${(profile.volAvg / 1000000).toFixed(1)}M` : stock.volume,
+              marketCap: profile.mktCap ? `${(profile.mktCap / 1000000000000).toFixed(2)}T` : stock.marketCap
+            };
+          }
+        } catch (err) {
+          console.error(`Error fetching initial data for ${stock.symbol}:`, err);
+        }
+        return stock;
+      }));
+      setStocks(updatedStocks);
+    };
+
+    fetchInitialData();
+  }, []);
+
+  // WebSocket for Real-time Updates
+  useEffect(() => {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'T') {
+        setStocks(currentStocks => 
+          currentStocks.map(stock => {
+            if (stock.symbol === data.sym) {
+              const newPrice = data.p;
+              const newChange = data.change !== undefined ? data.change : stock.change;
+              const newChangePercent = data.changePercent !== undefined ? data.changePercent : stock.changePercent;
+
+              const lastTime = stock.chartData[stock.chartData.length - 1].time;
+              const [hours, minutes] = lastTime.split(':').map(Number);
+              const nextMinutes = (minutes + 1) % 60;
+              const nextHours = nextMinutes === 0 ? (hours + 1) % 24 : hours;
+              const nextTime = `${nextHours.toString().padStart(2, '0')}:${nextMinutes.toString().padStart(2, '0')}`;
+
+              return {
+                ...stock,
+                price: newPrice,
+                change: newChange,
+                changePercent: newChangePercent,
+                chartData: [...stock.chartData.slice(1), { time: nextTime, value: newPrice }]
+              };
+            }
+            return stock;
+          })
+        );
+      }
+    };
+
+    return () => ws.close();
+  }, []);
+
+  // Sync watchlist with updated stock data
+  useEffect(() => {
+    setWatchlist(prev => prev.map(w => {
+      const updated = stocks.find(s => s.symbol === w.symbol);
+      return updated ? updated : w;
+    }));
+  }, [stocks]);
+
+  const handleRemoveFromWatchlist = (symbol: string) => {
+    setWatchlist(prev => prev.filter(s => s.symbol !== symbol));
+  };
+
+  const handleReorderWatchlist = (newOrder: Stock[]) => {
+    setWatchlist(newOrder);
+  };
+
+  const handleAddToWatchlist = () => {
+    const available = stocks.filter(s => !watchlist.find(w => w.symbol === s.symbol));
+    if (available.length > 0) {
+      setWatchlist(prev => [...prev, available[0]]);
+    } else {
+      const count = watchlist.filter(s => s.symbol.startsWith('GOOGL')).length;
+      const symbol = count === 0 ? 'GOOGL' : `GOOGL-${count}`;
+      
+      const newStock: Stock = {
+        symbol: symbol,
+        name: 'Alphabet Inc.',
+        price: 142.65,
+        change: 0,
+        changePercent: 0,
+        volume: '15.2M',
+        marketCap: '1.8T',
+        chartData: Array.from({ length: 20 }, (_, i) => ({ time: `${i}:00`, value: 130 + Math.random() * 20 }))
+      };
+      setStocks(prev => [...prev, newStock]);
+      setWatchlist(prev => [...prev, newStock]);
+    }
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      setWidgetOrder((items) => {
+        const oldIndex = items.indexOf(active.id as string);
+        const newIndex = items.indexOf(over.id as string);
+        return arrayMove(items, oldIndex, newIndex);
+      });
+    }
+  };
+
+  const renderWidget = (id: string) => {
+    switch (id) {
+      case 'market-pulse':
+        return <MarketPulse key={id} />;
+      case 'market-overview':
+        return (
+          <div key={id} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            {stocks.slice(0, 4).map((stock, idx) => (
+              <motion.div
+                key={stock.symbol}
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: idx * 0.1 }}
+              >
+                <StockCard stock={stock} onSelect={setActiveSymbol} />
+              </motion.div>
+            ))}
+          </div>
+        );
+      case 'main-chart':
+        return (
+          <div key={id} className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <ChartWidget 
+              title={`${stocks[0].symbol} Real-time`} 
+              data={stocks[0].chartData} 
+              color="#10b981"
+            />
+            <Watchlist 
+              stocks={watchlist} 
+              onReorder={handleReorderWatchlist}
+              onRemove={handleRemoveFromWatchlist}
+              onSelect={setActiveSymbol}
+            />
+          </div>
+        );
+      case 'historical-analysis':
+        return (
+          <div key={id} className="grid grid-cols-1 lg:grid-cols-1 gap-6">
+            <AdvancedChartWidget symbol={activeSymbol} />
+          </div>
+        );
+      case 'secondary-charts':
+        return (
+          <div key={id} className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <ChartWidget 
+              title={`${stocks[2].symbol} Performance`} 
+              data={stocks[2].chartData} 
+              color="#3b82f6"
+            />
+            <ChartWidget 
+              title={`${stocks[1].symbol} Trend`} 
+              data={stocks[1].chartData} 
+              color="#f59e0b"
+            />
+          </div>
+        );
+      case 'importer':
+        return <CSVImporter key={id} />;
+      case 'alerts':
+        return <AlertSystem key={id} />;
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div className="flex h-screen overflow-hidden bg-background">
+      <Sidebar />
+      <main className="flex-1 flex flex-col min-w-0">
+        <Header />
+        <div className="flex-1 flex min-h-0">
+          <div className="flex-1 overflow-y-auto p-8 space-y-8">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-3xl font-bold tracking-tight">Market Overview</h2>
+                <p className="text-muted-foreground">Real-time insights and portfolio analysis.</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <Tabs defaultValue="grid" className="w-[120px]">
+                  <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="grid"><LayoutGrid className="h-4 w-4" /></TabsTrigger>
+                    <TabsTrigger value="list"><List className="h-4 w-4" /></TabsTrigger>
+                  </TabsList>
+                </Tabs>
+                <Button className="gap-2 rounded-full px-6" onClick={handleAddToWatchlist}>
+                  <Plus className="h-4 w-4" /> Add Stock
+                </Button>
+              </div>
+            </div>
+
+            <DndContext 
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext 
+                items={widgetOrder}
+                strategy={rectSortingStrategy}
+              >
+                <div className="space-y-8">
+                  {widgetOrder.map((id) => (
+                    <DraggableWidget key={id} id={id}>
+                      {renderWidget(id)}
+                    </DraggableWidget>
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
+          </div>
+          
+          <motion.div 
+            initial={false}
+            animate={{ width: showCopilot ? 400 : 0, opacity: showCopilot ? 1 : 0 }}
+            className="border-l bg-card overflow-hidden hidden xl:block"
+          >
+            <div className="w-[400px] h-full">
+              <AICopilot />
+            </div>
+          </motion.div>
+        </div>
+      </main>
+      
+      <Button 
+        variant="secondary" 
+        size="icon" 
+        className="fixed bottom-6 right-6 h-12 w-12 rounded-full shadow-2xl border bg-primary text-primary-foreground hover:scale-110 transition-transform z-50 xl:hidden"
+        onClick={() => setShowCopilot(!showCopilot)}
+      >
+        <Plus className="h-6 w-6" />
+      </Button>
+    </div>
+  );
+}
