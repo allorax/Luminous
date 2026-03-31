@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Upload, CheckCircle2, AlertCircle } from 'lucide-react';
 
-export function CSVImporter() {
+export function CSVImporter({ portfolioId }: { portfolioId: string }) {
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [count, setCount] = useState(0);
@@ -14,12 +14,12 @@ export function CSVImporter() {
   };
 
   const handleUpload = async () => {
-    if (!file) return;
+    if (!file || !portfolioId) return;
     setStatus('loading');
     
     try {
       const text = await file.text();
-      const response = await fetch('/api/portfolio/import', {
+      const response = await fetch(`/api/portfolio/import?portfolioId=${portfolioId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
         body: text

@@ -43,6 +43,7 @@ import {
 import { cn } from '@/lib/utils';
 import axios from 'axios';
 import { calculateSMA, calculateEMA, calculateRSI, calculateMACD, Candle } from '@/lib/indicators';
+import { useTicker } from '@/lib/hooks/useTicker';
 
 interface AdvancedChartWidgetProps {
   symbol: string;
@@ -186,37 +187,43 @@ export function AdvancedChartWidget({ symbol, className }: AdvancedChartWidgetPr
     syncTimeScale(macdChartRef.current);
   }, [indicators.rsi, indicators.macd]);
 
+  const ticker = useTicker(symbol);
+
   useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+    if (ticker && mainSeriesRef.current && data.length > 0) {
+      const lastDataPoint = data[data.length - 1];
+      const now = Date.now() / 1000;
+      
+      const timeframeSeconds = {
+        '1D': 5 * 60,   // 5 min bars
+        '1W': 60 * 60,  // 1 hour bars
+        '1M': 24 * 60 * 60, // 1 day bars
+        '3M': 24 * 60 * 60,
+        '1Y': 24 * 60 * 60,
+        'ALL': 7 * 24 * 60 * 60
+      }[timeframe] || 60;
 
-    ws.onmessage = (event) => {
-      const update = JSON.parse(event.data);
-      if (update.type === 'T' && update.sym === symbol && mainSeriesRef.current) {
-        const time = (update.t / 1000) as Time;
-        const newPoint = {
-          time,
-          open: update.p,
-          high: update.p,
-          low: update.p,
-          close: update.p,
-          value: update.p
-        };
-        
-        // Update the series with the new point
-        // lightweight-charts handles updating the last bar if the time is the same
-        if (chartType === 'candlestick') {
-          (mainSeriesRef.current as ISeriesApi<'Candlestick'>).update(newPoint as CandlestickData);
-        } else if (chartType === 'area') {
-          (mainSeriesRef.current as ISeriesApi<'Area'>).update(newPoint as LineData);
-        } else {
-          (mainSeriesRef.current as ISeriesApi<'Line'>).update(newPoint as LineData);
-        }
+      const currentCandleStart = Math.floor(now / timeframeSeconds) * timeframeSeconds;
+      const isSameCandle = lastDataPoint.t / 1000 === currentCandleStart;
+      
+      const newPoint = {
+        time: currentCandleStart as Time,
+        open: isSameCandle ? lastDataPoint.o : ticker.price,
+        high: Math.max(isSameCandle ? lastDataPoint.h : ticker.price, ticker.price),
+        low: Math.min(isSameCandle ? lastDataPoint.l : ticker.price, ticker.price),
+        close: ticker.price,
+        value: ticker.price
+      };
+      
+      if (chartType === 'candlestick') {
+        (mainSeriesRef.current as ISeriesApi<'Candlestick'>).update(newPoint as CandlestickData);
+      } else if (chartType === 'area') {
+        (mainSeriesRef.current as ISeriesApi<'Area'>).update(newPoint as LineData);
+      } else {
+        (mainSeriesRef.current as ISeriesApi<'Line'>).update(newPoint as LineData);
       }
-    };
-
-    return () => ws.close();
-  }, [symbol, chartType]);
+    }
+  }, [ticker, chartType, timeframe, data]);
 
   useEffect(() => {
     const fetchData = async () => {

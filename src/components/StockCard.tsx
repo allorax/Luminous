@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 import { Stock } from '@/types';
 import { useEffect, useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { useTicker } from '@/lib/hooks/useTicker';
 
 interface StockCardProps {
   stock: Stock;
@@ -14,19 +15,24 @@ export function StockCard({ stock, onSelect }: StockCardProps) {
   const isPositive = stock.change >= 0;
   const [flash, setFlash] = useState<'up' | 'down' | null>(null);
   const prevPrice = useRef(stock.price);
+  const ticker = useTicker(stock.symbol);
+  
+  const currentPrice = ticker?.price ?? stock.price;
+  const currentChange = ticker?.change ?? stock.change;
+  const currentChangePercent = ticker?.changePercent ?? stock.changePercent;
 
   useEffect(() => {
-    if (stock.price > prevPrice.current) {
+    if (currentPrice > prevPrice.current) {
       setFlash('up');
       const timer = setTimeout(() => setFlash(null), 1000);
       return () => clearTimeout(timer);
-    } else if (stock.price < prevPrice.current) {
+    } else if (currentPrice < prevPrice.current) {
       setFlash('down');
       const timer = setTimeout(() => setFlash(null), 1000);
       return () => clearTimeout(timer);
     }
-    prevPrice.current = stock.price;
-  }, [stock.price]);
+    prevPrice.current = currentPrice;
+  }, [currentPrice]);
 
   return (
     <Card 
@@ -48,19 +54,19 @@ export function StockCard({ stock, onSelect }: StockCardProps) {
       <CardContent>
         <div className="text-2xl font-bold flex items-baseline gap-2">
           <motion.span
-            key={stock.price}
+            key={currentPrice}
             initial={{ opacity: 0.5, y: -5 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3 }}
           >
-            ${stock.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            ${currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </motion.span>
         </div>
         <p className={cn(
           "text-xs font-semibold mt-1 flex items-center gap-1",
-          isPositive ? "text-gain" : "text-loss"
+          currentChange >= 0 ? "text-gain" : "text-loss"
         )}>
-          {isPositive ? "+" : ""}{stock.change.toFixed(2)} ({stock.changePercent.toFixed(2)}%)
+          {currentChange >= 0 ? "+" : ""}{currentChange.toFixed(2)} ({currentChangePercent.toFixed(2)}%)
         </p>
         <div className="mt-4 flex items-center justify-between text-[10px] text-muted-foreground uppercase tracking-wider">
           <span>Vol: {stock.volume}</span>
