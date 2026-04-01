@@ -5,7 +5,6 @@ import { Watchlist } from '@/components/Watchlist';
 import { ChartWidget } from '@/components/ChartWidget';
 import { StockChartWidget } from '@/components/StockChartWidget';
 import { AdvancedChartWidget } from '@/components/AdvancedChartWidget';
-import { AICopilot } from '@/components/AICopilot';
 import { Header, Sidebar } from '@/components/Navigation';
 import { Stock } from '@/types';
 import { motion } from 'motion/react';
@@ -49,7 +48,6 @@ const initialStocks: Stock[] = [
 const initialWidgetOrder = ['market-pulse', 'symbol-detail', 'portfolio-stats', 'portfolio-list', 'market-overview', 'main-chart', 'historical-analysis', 'watchlist', 'secondary-charts', 'importer', 'alerts'];
 
 export function DashboardPage() {
-  const [showCopilot, setShowCopilot] = useState(true);
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [watchlist, setWatchlist] = useState<Stock[]>([]);
   const [loading, setLoading] = useState(true);
@@ -291,27 +289,8 @@ export function DashboardPage() {
               </DndContext>
             )}
           </div>
-          
-          <motion.div 
-            initial={false}
-            animate={{ width: showCopilot ? 400 : 0, opacity: showCopilot ? 1 : 0 }}
-            className="border-l bg-card overflow-hidden hidden xl:block"
-          >
-            <div className="w-[400px] h-full">
-              <AICopilot />
-            </div>
-          </motion.div>
         </div>
       </main>
-      
-      <Button 
-        variant="secondary" 
-        size="icon" 
-        className="fixed bottom-6 right-6 h-12 w-12 rounded-full shadow-2xl border bg-primary text-primary-foreground hover:scale-110 transition-transform z-50 xl:hidden"
-        onClick={() => setShowCopilot(!showCopilot)}
-      >
-        <Plus className="h-6 w-6" />
-      </Button>
     </div>
   );
 }
