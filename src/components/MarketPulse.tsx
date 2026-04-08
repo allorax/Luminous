@@ -77,9 +77,9 @@ export function MarketPulse() {
   }
 
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 col-span-full">
+    <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 col-span-full">
       {/* Indices Bar */}
-      <Card className="xl:col-span-3 bg-background/50 backdrop-blur-xl border-white/5 overflow-hidden">
+      <Card className="xl:col-span-2 bg-background/50 backdrop-blur-xl border-white/5 overflow-hidden">
         <div className="flex items-center gap-8 p-4 overflow-x-auto no-scrollbar">
           <div className="flex items-center gap-2 pr-4 border-r border-white/5">
             <Globe className="h-4 w-4 text-primary" />
@@ -165,40 +165,6 @@ export function MarketPulse() {
               ))}
             </TabsContent>
           </Tabs>
-        </CardContent>
-      </Card>
-
-      {/* Market Status */}
-      <Card className="bg-background/50 backdrop-blur-xl border-white/5">
-        <CardHeader>
-          <CardTitle className="text-sm font-bold uppercase tracking-widest">Market Status</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="flex flex-col items-center justify-center py-8 border-2 border-dashed border-white/5 rounded-2xl bg-white/5">
-            <div className={cn(
-              "h-16 w-16 rounded-full flex items-center justify-center mb-4 animate-pulse",
-              marketStatus?.market === 'open' ? "bg-gain/20" : "bg-loss/20"
-            )}>
-              <Globe className={cn(
-                "h-8 w-8",
-                marketStatus?.market === 'open' ? "text-gain" : "text-loss"
-              )} />
-            </div>
-            <span className="text-xl font-bold tracking-tighter capitalize">Market {marketStatus?.market || 'Closed'}</span>
-            <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-              {marketStatus?.serverTime ? new Date(marketStatus.serverTime).toLocaleTimeString() : 'Syncing...'}
-            </span>
-          </div>
-          
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Exchanges</span>
-              <div className="flex gap-2">
-                <Badge variant="outline" className={cn("text-[8px] h-4", marketStatus?.exchanges?.nyse === 'open' ? "text-gain border-gain/20" : "text-loss border-loss/20")}>NYSE</Badge>
-                <Badge variant="outline" className={cn("text-[8px] h-4", marketStatus?.exchanges?.nasdaq === 'open' ? "text-gain border-gain/20" : "text-loss border-loss/20")}>NASDAQ</Badge>
-              </div>
-            </div>
-          </div>
         </CardContent>
       </Card>
     </div>

@@ -1,61 +1,62 @@
 import { useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
-import { Wifi, WifiOff } from 'lucide-react';
+import { Clock, Globe } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import axios from 'axios';
 
 export function MarketStatus() {
-  const [status, setStatus] = useState<'connected' | 'connecting' | 'disconnected'>('connecting');
+  const [marketData, setMarketData] = useState<{ market: string, serverTime: string } | null>(null);
+  const [currentTime, setCurrentTime] = useState(new Date());
 
   useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
-    
-    let ws: WebSocket;
-    let reconnectTimer: NodeJS.Timeout;
-
-    const connect = () => {
-      ws = new WebSocket(wsUrl);
-      
-      ws.onopen = () => {
-        setStatus('connected');
-      };
-      
-      ws.onclose = () => {
-        setStatus('disconnected');
-        reconnectTimer = setTimeout(connect, 5000);
-      };
-      
-      ws.onerror = () => {
-        setStatus('disconnected');
-      };
+    const fetchStatus = async () => {
+      try {
+        const res = await axios.get('/api/market/status');
+        setMarketData(res.data);
+      } catch (err) {
+        console.error("Failed to fetch market status", err);
+      }
     };
 
-    connect();
+    fetchStatus();
+    const statusInterval = setInterval(fetchStatus, 60000); // Sync every minute
+
+    const clockInterval = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
 
     return () => {
-      if (ws) ws.close();
-      clearTimeout(reconnectTimer);
+      clearInterval(statusInterval);
+      clearInterval(clockInterval);
     };
   }, []);
 
+  const isOpen = marketData?.market === 'open';
+
   return (
-    <Badge 
-      variant="outline" 
-      className={cn(
-        "flex items-center gap-1.5 px-2 py-1 transition-colors duration-500",
-        status === 'connected' && "border-gain/50 bg-gain/10 text-gain",
-        status === 'connecting' && "border-warning/50 bg-warning/10 text-warning",
-        status === 'disconnected' && "border-loss/50 bg-loss/10 text-loss"
-      )}
-    >
-      {status === 'connected' ? (
-        <Wifi className="h-3 w-3 animate-pulse" />
-      ) : (
-        <WifiOff className="h-3 w-3" />
-      )}
-      <span className="text-[10px] font-bold uppercase tracking-wider">
-        Market {status}
-      </span>
-    </Badge>
+    <div className="flex items-center gap-2">
+      <Badge 
+        variant="outline" 
+        className={cn(
+          "h-7 px-2 flex items-center gap-1.5 transition-all duration-500 border-none bg-muted/30",
+          isOpen ? "text-gain" : "text-muted-foreground"
+        )}
+      >
+        <div className={cn(
+          "h-1.5 w-1.5 rounded-full",
+          isOpen ? "bg-gain animate-pulse" : "bg-muted-foreground/30"
+        )} />
+        <span className="text-[10px] font-bold uppercase tracking-wider">
+          Market {isOpen ? 'Open' : 'Closed'}
+        </span>
+      </Badge>
+      
+      <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/20 text-muted-foreground">
+        <Clock className="h-3 w-3" />
+        <span className="text-[10px] font-mono font-bold tabular-nums">
+          {currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+        </span>
+      </div>
+    </div>
   );
 }

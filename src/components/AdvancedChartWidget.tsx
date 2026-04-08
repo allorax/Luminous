@@ -1,4 +1,3 @@
-
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { 
   createChart, 
@@ -51,7 +50,7 @@ interface AdvancedChartWidgetProps {
 }
 
 type ChartType = 'candlestick' | 'line' | 'area';
-type Timeframe = '1D' | '1W' | '1M' | '3M' | '1Y' | 'ALL';
+type Timeframe = '1D' | '5D' | '1M' | '6M' | '1Y' | 'ALL';
 
 interface IndicatorState {
   sma: boolean;
@@ -85,22 +84,18 @@ export function AdvancedChartWidget({ symbol, className }: AdvancedChartWidgetPr
   const [data, setData] = useState<Candle[]>([]);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // Drawing tools state
   const [isDrawing, setIsDrawing] = useState(false);
   const [drawings, setDrawings] = useState<{ id: string; type: 'trendline'; points: { time: Time; price: number }[] }[]>([]);
   const drawingSeriesRef = useRef<ISeriesApi<'Line'>[]>([]);
 
-  // Separate refs for indicator containers
   const rsiContainerRef = useRef<HTMLDivElement>(null);
   const macdContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!chartContainerRef.current) return;
     
-    // Guard: ensure container has valid dimensions before creating chart
     const { clientWidth, clientHeight } = chartContainerRef.current;
     if (clientWidth <= 0 || clientHeight <= 0) {
-      // Retry after a short delay when container gets laid out
       const retryTimer = setTimeout(() => {
         if (chartContainerRef.current) {
           chartContainerRef.current.dispatchEvent(new Event('resize'));
@@ -143,12 +138,10 @@ export function AdvancedChartWidget({ symbol, className }: AdvancedChartWidgetPr
       setDrawings(prev => {
         const lastDrawing = prev[prev.length - 1];
         if (lastDrawing && lastDrawing.points.length === 1) {
-          // Complete trendline
           const updated = [...prev];
           updated[updated.length - 1].points.push({ time: param.time!, price });
           return updated;
         } else {
-          // Start new trendline
           return [...prev, { id: Math.random().toString(36).substr(2, 9), type: 'trendline', points: [{ time: param.time!, price }] }];
         }
       });
@@ -176,7 +169,6 @@ export function AdvancedChartWidget({ symbol, className }: AdvancedChartWidgetPr
     };
   }, []);
 
-  // Sync time scales
   useEffect(() => {
     if (!chartRef.current) return;
     
@@ -208,16 +200,17 @@ export function AdvancedChartWidget({ symbol, className }: AdvancedChartWidgetPr
       const lastDataPoint = data[data.length - 1];
       const now = Date.now() / 1000;
       
-      const timeframeSeconds = {
+      const timeframeSeconds: Record<Timeframe, number> = {
         '1D': 5 * 60,   // 5 min bars
-        '1W': 60 * 60,  // 1 hour bars
+        '5D': 60 * 60,  // 1 hour bars
         '1M': 24 * 60 * 60, // 1 day bars
-        '3M': 24 * 60 * 60,
+        '6M': 24 * 60 * 60,
         '1Y': 24 * 60 * 60,
         'ALL': 7 * 24 * 60 * 60
-      }[timeframe] || 60;
+      };
 
-      const currentCandleStart = Math.floor(now / timeframeSeconds) * timeframeSeconds;
+      const tfSec = timeframeSeconds[timeframe] || 60;
+      const currentCandleStart = Math.floor(now / tfSec) * tfSec;
       const isSameCandle = lastDataPoint.t / 1000 === currentCandleStart;
       
       const newPoint = {
@@ -250,9 +243,9 @@ export function AdvancedChartWidget({ symbol, className }: AdvancedChartWidgetPr
 
         switch (timeframe) {
           case '1D': from.setDate(now.getDate() - 1); timespan = 'minute'; multiplier = 5; break;
-          case '1W': from.setDate(now.getDate() - 7); timespan = 'hour'; multiplier = 1; break;
+          case '5D': from.setDate(now.getDate() - 5); timespan = 'hour'; multiplier = 1; break;
           case '1M': from.setMonth(now.getMonth() - 1); timespan = 'day'; break;
-          case '3M': from.setMonth(now.getMonth() - 3); timespan = 'day'; break;
+          case '6M': from.setMonth(now.getMonth() - 6); timespan = 'day'; break;
           case '1Y': from.setFullYear(now.getFullYear() - 1); timespan = 'day'; break;
           case 'ALL': from.setFullYear(now.getFullYear() - 5); timespan = 'week'; break;
         }
@@ -313,7 +306,6 @@ export function AdvancedChartWidget({ symbol, className }: AdvancedChartWidgetPr
       (mainSeriesRef.current as ISeriesApi<'Line'>).setData(formattedData);
     }
 
-    // Update Indicators
     if (indicators.sma) {
       if (smaSeriesRef.current) chart.removeSeries(smaSeriesRef.current);
       smaSeriesRef.current = chart.addSeries(LineSeries, { color: '#f59e0b', lineWidth: 1, title: 'SMA 20' });
@@ -332,7 +324,6 @@ export function AdvancedChartWidget({ symbol, className }: AdvancedChartWidgetPr
       emaSeriesRef.current = null;
     }
 
-    // RSI Pane
     if (indicators.rsi && rsiContainerRef.current) {
       if (!rsiChartRef.current) {
         rsiChartRef.current = createChart(rsiContainerRef.current, {
@@ -350,7 +341,6 @@ export function AdvancedChartWidget({ symbol, className }: AdvancedChartWidgetPr
       rsiSeriesRef.current = null;
     }
 
-    // MACD Pane
     if (indicators.macd && macdContainerRef.current) {
       if (!macdChartRef.current) {
         macdChartRef.current = createChart(macdContainerRef.current, {
@@ -382,41 +372,19 @@ export function AdvancedChartWidget({ symbol, className }: AdvancedChartWidgetPr
     setIndicators(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const handleChartClick = (param: MouseEventParams) => {
-    if (!isDrawing || !param.time || !param.point || !mainSeriesRef.current) return;
-    
-    const price = mainSeriesRef.current.coordinateToPrice(param.point.y);
-    if (price === null) return;
-
-    setDrawings(prev => {
-      const lastDrawing = prev[prev.length - 1];
-      if (lastDrawing && lastDrawing.points.length === 1) {
-        // Complete trendline
-        const updated = [...prev];
-        updated[updated.length - 1].points.push({ time: param.time!, price });
-        return updated;
-      } else {
-        // Start new trendline
-        return [...prev, { id: Math.random().toString(36).substr(2, 9), type: 'trendline', points: [{ time: param.time!, price }] }];
-      }
-    });
-  };
-
   useEffect(() => {
     if (!chartRef.current) return;
     const chart = chartRef.current;
 
-    // Clear old drawing series
     drawingSeriesRef.current.forEach(s => chart.removeSeries(s));
     drawingSeriesRef.current = [];
 
-    // Draw trendlines
     drawings.forEach(drawing => {
       if (drawing.points.length === 2) {
         const series = chart.addSeries(LineSeries, {
           color: '#ffffff',
           lineWidth: 1,
-          lineStyle: 2, // Dashed
+          lineStyle: 2,
           lastValueVisible: false,
           priceLineVisible: false,
         });
@@ -438,7 +406,7 @@ export function AdvancedChartWidget({ symbol, className }: AdvancedChartWidgetPr
           </div>
           
           <div className="hidden md:flex items-center gap-1 bg-muted/20 p-1 rounded-lg border border-white/5">
-            {(['1D', '1W', '1M', '3M', '1Y', 'ALL'] as Timeframe[]).map((tf) => (
+            {(['1D', '5D', '1M', '6M', '1Y', 'ALL'] as Timeframe[]).map((tf) => (
               <Button
                 key={tf}
                 variant="ghost"

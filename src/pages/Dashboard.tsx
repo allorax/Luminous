@@ -36,6 +36,7 @@ import { PortfolioManager } from '@/components/PortfolioManager';
 import { PortfolioPerformance } from '@/components/PortfolioPerformance';
 import { SymbolDetail } from '@/components/SymbolDetail';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { NewsFeed } from '@/components/NewsFeed';
 
 const initialStocks: Stock[] = [
   { symbol: 'AAPL', name: 'Apple Inc.', price: 182.63, change: 1.45, changePercent: 0.8, volume: '52.4M', marketCap: '2.85T', chartData: Array.from({ length: 20 }, (_, i) => ({ time: `2026-03-${31-i}`, value: 170 + Math.random() * 20 })) },
@@ -45,13 +46,13 @@ const initialStocks: Stock[] = [
   { symbol: 'AMZN', name: 'Amazon.com, Inc.', price: 175.35, change: 0.82, changePercent: 0.47, volume: '35.6M', marketCap: '1.82T', chartData: Array.from({ length: 20 }, (_, i) => ({ time: `2026-03-${31-i}`, value: 160 + Math.random() * 25 })) },
 ];
 
-const initialWidgetOrder = ['market-pulse', 'symbol-detail', 'portfolio-stats', 'portfolio-list', 'market-overview', 'main-chart', 'historical-analysis', 'watchlist', 'secondary-charts', 'importer', 'alerts'];
+const marketsWidgetOrder = ['market-pulse', 'symbol-detail', 'market-overview', 'main-chart', 'historical-analysis', 'secondary-charts', 'watchlist', 'alerts'];
 
 export function DashboardPage() {
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [watchlist, setWatchlist] = useState<Stock[]>([]);
   const [loading, setLoading] = useState(true);
-  const [widgetOrder, setWidgetOrder] = useState(initialWidgetOrder);
+  const [widgetOrder, setWidgetOrder] = useState(marketsWidgetOrder);
   const [activeSymbol, setActiveSymbol] = useState('NVDA');
   const [selectedPortfolioId, setSelectedPortfolioId] = useState<string>('');
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -109,7 +110,7 @@ export function DashboardPage() {
 
   const filteredWidgetOrder = useMemo(() => {
     if (activeTab === 'portfolio') return ['portfolio-stats', 'portfolio-list', 'importer'];
-    if (activeTab === 'markets') return ['market-pulse', 'symbol-detail', 'main-chart', 'historical-analysis'];
+    if (activeTab === 'markets') return widgetOrder;
     return widgetOrder;
   }, [activeTab, widgetOrder]);
 
@@ -190,8 +191,8 @@ export function DashboardPage() {
         return (
           <div key={id} className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <ChartWidget 
-              title={`${stocks[0]?.symbol || 'Symbol'} Real-time`} 
-              data={stocks[0]?.chartData || []} 
+              symbol={stocks[0]?.symbol || 'AAPL'}
+              title={`${stocks[0]?.symbol || 'AAPL'} Real-time`} 
               color="#10b981"
             />
             <Watchlist 
@@ -214,16 +215,26 @@ export function DashboardPage() {
         return (
           <div key={id} className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <ChartWidget 
-              title={`${stocks[2]?.symbol || 'Symbol'} Performance`} 
-              data={stocks[2]?.chartData || []} 
+              symbol={stocks[2]?.symbol || 'NVDA'}
+              title={`${stocks[2]?.symbol || 'NVDA'} Performance`} 
               color="#3b82f6"
             />
             <ChartWidget 
-              title={`${stocks[1]?.symbol || 'Symbol'} Trend`} 
-              data={stocks[1]?.chartData || []} 
+              symbol={stocks[1]?.symbol || 'TSLA'}
+              title={`${stocks[1]?.symbol || 'TSLA'} Trend`} 
               color="#f59e0b"
             />
           </div>
+        );
+      case 'watchlist':
+        return (
+          <Watchlist 
+            key={id}
+            stocks={watchlist} 
+            onReorder={handleReorderWatchlist}
+            onRemove={handleRemoveFromWatchlist}
+            onSelect={setActiveSymbol}
+          />
         );
       case 'importer':
         return <CSVImporter key={id} portfolioId={selectedPortfolioId} />;
@@ -234,59 +245,119 @@ export function DashboardPage() {
     }
   };
 
+  const getTabTitle = () => {
+    switch (activeTab) {
+      case 'dashboard': return 'Home';
+      case 'markets': return 'Markets';
+      case 'portfolio': return 'Portfolio';
+      case 'settings': return 'Settings';
+      default: return activeTab.charAt(0).toUpperCase() + activeTab.slice(1);
+    }
+  };
+
+  const getTabDescription = () => {
+    switch (activeTab) {
+      case 'dashboard': return 'Latest financial news and market insights.';
+      case 'markets': return 'Real-time insights and portfolio analysis.';
+      case 'portfolio': return 'Manage your portfolios and track performance.';
+      case 'settings': return 'Configure your terminal preferences.';
+      default: return '';
+    }
+  };
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar activeTab={activeTab} onTabSelect={setActiveTab} />
       <main className="flex-1 flex flex-col min-w-0">
-        <Header onSymbolSelect={setActiveSymbol} />
+        <Header />
         <div className="flex-1 flex min-h-0">
           <div className="flex-1 overflow-y-auto p-8 space-y-8">
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-3xl font-bold tracking-tight">
-                  {activeTab === 'dashboard' ? 'Market Overview' : activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}
+                  {getTabTitle()}
                 </h2>
-                <p className="text-muted-foreground text-sm">Real-time insights and portfolio analysis.</p>
+                <p className="text-muted-foreground text-sm">{getTabDescription()}</p>
               </div>
-              <div className="flex items-center gap-3">
-                <Tabs defaultValue="grid" className="w-[120px]">
-                  <TabsList className="grid w-full grid-cols-2">
-                    <TabsTrigger value="grid"><LayoutGrid className="h-4 w-4" /></TabsTrigger>
-                    <TabsTrigger value="list"><List className="h-4 w-4" /></TabsTrigger>
-                  </TabsList>
-                </Tabs>
-                <Button className="gap-2 rounded-full px-6" onClick={handleAddToWatchlist}>
-                  <Plus className="h-4 w-4" /> Add Stock
-                </Button>
-              </div>
+              {activeTab === 'markets' && (
+                <div className="flex items-center gap-3">
+                  <Tabs defaultValue="grid" className="w-[120px]">
+                    <TabsList className="grid w-full grid-cols-2">
+                      <TabsTrigger value="grid"><LayoutGrid className="h-4 w-4" /></TabsTrigger>
+                      <TabsTrigger value="list"><List className="h-4 w-4" /></TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                  <Button className="gap-2 rounded-full px-6" onClick={handleAddToWatchlist}>
+                    <Plus className="h-4 w-4" /> Add Stock
+                  </Button>
+                </div>
+              )}
             </div>
 
-            {loading ? (
-              <div className="flex-1 flex items-center justify-center">
-                <div className="text-center space-y-4">
-                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto" />
-                  <p className="text-muted-foreground animate-pulse">Initializing Luminous Terminal...</p>
+            {/* Dashboard Tab — News Homepage */}
+            {activeTab === 'dashboard' && (
+              <ErrorBoundary fallbackMessage="Intelligence Feed is experiencing issues. Retrying...">
+                <NewsFeed />
+              </ErrorBoundary>
+            )}
+
+            {/* Markets Tab — Previous dashboard widgets */}
+            {activeTab === 'markets' && (
+              loading ? (
+                <div className="flex-1 flex items-center justify-center">
+                  <div className="text-center space-y-4">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto" />
+                    <p className="text-muted-foreground animate-pulse">Initializing Luminous Terminal...</p>
+                  </div>
+                </div>
+              ) : (
+                <DndContext 
+                  sensors={sensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handleDragEnd}
+                >
+                  <SortableContext 
+                    items={filteredWidgetOrder}
+                    strategy={rectSortingStrategy}
+                  >
+                    <div className="space-y-8">
+                      {filteredWidgetOrder.map((id) => (
+                        <DraggableWidget key={id} id={id}>
+                          {renderWidget(id)}
+                        </DraggableWidget>
+                      ))}
+                    </div>
+                  </SortableContext>
+                </DndContext>
+              )
+            )}
+
+            {/* Portfolio Tab */}
+            {activeTab === 'portfolio' && (
+              loading ? (
+                <div className="flex-1 flex items-center justify-center">
+                  <div className="text-center space-y-4">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto" />
+                    <p className="text-muted-foreground animate-pulse">Loading portfolios...</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-8">
+                  <PortfolioPerformance portfolioId={selectedPortfolioId} />
+                  <PortfolioManager onSelect={(id: string) => setSelectedPortfolioId(id)} />
+                  <CSVImporter portfolioId={selectedPortfolioId} />
+                </div>
+              )
+            )}
+
+            {/* Settings Tab */}
+            {activeTab === 'settings' && (
+              <div className="space-y-6">
+                <AlertSystem />
+                <div className="p-12 border border-dashed rounded-xl flex items-center justify-center text-muted-foreground">
+                  Settings panel — coming soon.
                 </div>
               </div>
-            ) : (
-              <DndContext 
-                sensors={sensors}
-                collisionDetection={closestCenter}
-                onDragEnd={handleDragEnd}
-              >
-                <SortableContext 
-                  items={filteredWidgetOrder}
-                  strategy={rectSortingStrategy}
-                >
-                  <div className="space-y-8">
-                    {filteredWidgetOrder.map((id) => (
-                      <DraggableWidget key={id} id={id}>
-                        {renderWidget(id)}
-                      </DraggableWidget>
-                    ))}
-                  </div>
-                </SortableContext>
-              </DndContext>
             )}
           </div>
         </div>
