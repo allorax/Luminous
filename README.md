@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" alt="Luminous Banner" width="1200">
+  <img src="public/assets/banner_light.png" alt="Luminous Banner" width="1200">
 
   # Luminous 
   ### The Intelligent Financial Intelligence Terminal
