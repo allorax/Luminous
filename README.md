@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="public/assets/banner_light.png" alt="Luminous Banner" width="1200">
+  <img src="public/assets/ChatGPT Image Apr 8, 2026, 07_34_23 PM.png" alt="Luminous Banner" width="1200">
 
   # Luminous 
   ### The Intelligent Financial Intelligence Terminal
